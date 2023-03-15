@@ -3,18 +3,20 @@ import {
   AxiosHeaders,
   AxiosRequestConfig,
   AxiosRequestHeaders,
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  getUri,
   InternalAxiosRequestConfig,
   Method,
 } from "axios";
-import buildUrl from "axios/lib/helpers/buildURL";
-import combineURLs from "axios/lib/helpers/combineURLs";
-import isAbsoluteURL from "axios/lib/helpers/isAbsoluteURL";
 import { CredentialsProvider } from ".";
 import { AssumeRoleCredentialsProvider } from "./credentials/assumeRoleCredentialsProvider";
 import { isCredentialsProvider } from "./credentials/isCredentialsProvider";
 import { SimpleCredentialsProvider } from "./credentials/simpleCredentialsProvider";
 
-type FIXME = any;
+type AxiosRawHeaders = {
+  [key: string]: any;
+};
 
 export interface InterceptorOptions {
   /**
@@ -104,19 +106,15 @@ export const aws4Interceptor = <D = any>(
       );
     }
 
+    const url = getUri(config);
+
     if (config.params) {
-      config.url = buildUrl(config.url, config.params, config.paramsSerializer);
       delete config.params;
     }
 
-    let url = config.url;
-
-    if (config.baseURL && !isAbsoluteURL(config.url)) {
-      url = combineURLs(config.baseURL, config.url);
-    }
-
     const { host, pathname, search } = new URL(url);
-    const { data, headers, method } = config;
+    const { data, method } = config;
+    const headers = new AxiosHeaders(config.headers);
 
     const transformRequest = getTransformer(config);
 
@@ -126,16 +124,15 @@ export const aws4Interceptor = <D = any>(
     const transformedData = transformRequest(data, headers);
 
     // Remove all the default Axios headers
-    const {
-      common,
-      delete: _delete, // 'delete' is a reserved word
-      get,
-      head,
-      post,
-      put,
-      patch,
-      ...headersToSign
-    } = headers as any as InternalAxiosHeaders;
+    headers.delete([
+      "common",
+      "delete",
+      "get",
+      "head",
+      "post",
+      "put",
+      "patch",
+    ])
     // Axios type definitions do not match the real shape of this object
 
     const signingOptions: AWS4Request = {
@@ -146,18 +143,20 @@ export const aws4Interceptor = <D = any>(
       service: options?.service,
       signQuery: options?.signQuery,
       body: transformedData,
-      headers: headersToSign as any,
+      headers,
     };
 
     const resolvedCredentials = await credentialsProvider.getCredentials();
     sign(signingOptions, resolvedCredentials);
 
-    config.headers = new AxiosHeaders(signingOptions.headers as FIXME);
+    config.headers = new AxiosHeaders(signingOptions.headers as AxiosRawHeaders);
 
     if (signingOptions.signQuery) {
       const originalUrl = new URL(config.url);
       const signedUrl = new URL(originalUrl.origin + signingOptions.path);
       config.url = signedUrl.toString();
+    } else {
+      config.url = url;
     }
 
     return config;
